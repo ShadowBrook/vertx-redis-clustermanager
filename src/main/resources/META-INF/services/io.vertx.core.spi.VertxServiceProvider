@@ -1,1 +1,1 @@
-com.retailsvc.vertx.spi.cluster.redis.RedisClusterManager
+io.github.shadowbrook.RedisClusterManager

@@ -20,7 +20,7 @@ with [AWS ElastiCache Cluster][elasticache], [Amazon MemoryDB][memorydb] and [Az
 
 ```xml
 <dependency>
-  <groupId>com.retailsvc</groupId>
+  <groupId>io.github.shadowbrook</groupId>
   <artifactId>vertx-redis-clustermanager</artifactId>
   <version>VERSION</version>
 </dependency>
@@ -83,12 +83,13 @@ The `RedisConfig` API can be used to set all configurable properties. It takes d
 system properties allow for injection of secrets while remaining configuration can be built at runtime.
 
 ```java
-import com.retailsvc.vertx.spi.cluster.redis.config.*;
+import io.github.shadowbrook.config.ClientType;
+import io.github.shadowbrook.config.RedisConfig;
 
 var config = new RedisConfig()
-    .setClientType(ClientType.CLUSTER)
-    .addAddress("redis://redis1.internal:6379")
-    .addAddress("redis://redis2.internal:6379");
+        .setClientType(ClientType.CLUSTER)
+        .addAddress("redis://redis1.internal:6379")
+        .addAddress("redis://redis2.internal:6379");
 ```
 
 ### Configuration for data types
