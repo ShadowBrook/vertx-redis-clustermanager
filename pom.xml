@@ -3,13 +3,13 @@
     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.retailsvc</groupId>
+  <groupId>io.github.shadowbrook</groupId>
   <artifactId>vertx-redis-clustermanager</artifactId>
-  <version>0.0.1-local</version>
+  <version>0.0.1</version>
 
   <name>Vert.x Redis ClusterManager</name>
-  <description>Vert.x ClusterManager for Redis.</description>
-  <url>https://github.com/extenda/vertx-redis-clustermanager</url>
+  <description>Vert.x ClusterManager for Redis (fork with dependency upgrades).</description>
+  <url>https://github.com/shadowbrook/vertx-redis-clustermanager</url>
 
   <licenses>
     <license>
@@ -35,13 +35,18 @@
       <organization>Extenda Retail</organization>
       <organizationUrl>https://extendaretail.com</organizationUrl>
     </developer>
+    <developer>
+      <id>shadowbrook</id>
+      <name>shadowbrook</name>
+      <url>https://github.com/shadowbrook</url>
+    </developer>
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/extenda/vertx-redis-clustermanager.git</connection>
-    <developerConnection>scm:git:ssh://github.com:extenda/vertx-redis-clustermanager.git</developerConnection>
+    <connection>scm:git:https://github.com/shadowbrook/vertx-redis-clustermanager.git</connection>
+    <developerConnection>scm:git:ssh://github.com:shadowbrook/vertx-redis-clustermanager.git</developerConnection>
     <tag>HEAD</tag>
-    <url>http://github.com/extenda/vertx-redis-clustermanager/tree/master</url>
+    <url>https://github.com/shadowbrook/vertx-redis-clustermanager/tree/main</url>
   </scm>
 
   <properties>
@@ -59,8 +64,8 @@
     <dependencies>
       <dependency>
         <groupId>io.vertx</groupId>
-        <artifactId>vertx-stack-depchain</artifactId>
-        <version>4.5.25</version>
+        <artifactId>vertx-dependencies</artifactId>
+        <version>5.1.5</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -83,10 +88,16 @@
         <artifactId>awaitility</artifactId>
         <version>1.7.0</version>
       </dependency>
+      <!-- Deprecated in Vert.x 5, but required for tests -->
+      <dependency>
+        <groupId>io.vertx</groupId>
+        <artifactId>vertx-service-discovery</artifactId>
+        <version>5.1.5</version>
+      </dependency>
       <dependency>
         <groupId>org.assertj</groupId>
         <artifactId>assertj-core</artifactId>
-        <version>3.24.2</version>
+        <version>3.27.7</version>
       </dependency>
       <dependency>
         <groupId>org.mockito</groupId>
@@ -187,6 +198,11 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-web-client</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
@@ -233,7 +249,7 @@
         <version>3.15.0</version>
         <configuration>
           <annotationProcessors>
-            <annotationProcessor>io.vertx.codegen.CodeGenProcessor</annotationProcessor>
+            <annotationProcessor>io.vertx.codegen.processor.Processor</annotationProcessor>
           </annotationProcessors>
         </configuration>
       </plugin>
