@@ -58,8 +58,10 @@ public class SubscriptionCatalog {
     this.registrationListener = registrationListener;
     subsMap = redisson.getSetMultimap(keyFactory.vertx("subs"));
     topic = redisson.getTopic(keyFactory.topic("subs"));
-    listenerId = topic.addListener(String.class, this::onMessage);
+    // Initialize throttling before registering the topic listener. addListener is asynchronous and
+    // may dispatch a pending message on a Redisson Netty thread before the constructor finishes.
     throttling = new Throttling(this::getAndUpdate);
+    listenerId = topic.addListener(String.class, this::onMessage);
   }
 
   /**
