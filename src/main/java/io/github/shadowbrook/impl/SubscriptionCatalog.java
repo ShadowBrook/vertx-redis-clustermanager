@@ -128,8 +128,18 @@ public class SubscriptionCatalog {
         fireRegistrationUpdateEvent(address);
       } else {
         ownSubs.compute(address, (k, v) -> addToSet(registrationInfo, v));
-        subsMap.put(address, registrationInfo);
-        topic.publish(address);
+        try {
+          subsMap.put(address, registrationInfo);
+          topic.publish(address);
+        } catch (Exception e) {
+          // The in-memory registration above is kept, so periodic reconciliation will
+          // repair the missing write.
+          log.error(
+              "Failed to write subscription for address [{}] to Redis. "
+                  + "It will be repaired by reconciliation.",
+              address,
+              e);
+        }
       }
     } finally {
       lock.unlock();
@@ -187,8 +197,18 @@ public class SubscriptionCatalog {
         fireRegistrationUpdateEvent(address);
       } else {
         ownSubs.computeIfPresent(address, (k, v) -> removeFromSet(registrationInfo, v));
-        subsMap.remove(address, registrationInfo);
-        topic.publish(address);
+        try {
+          subsMap.remove(address, registrationInfo);
+          topic.publish(address);
+        } catch (Exception e) {
+          // The in-memory registration above was already removed, so reconciliation will
+          // not re-add it. A leftover entry in Redis is cleaned up on cluster leave.
+          log.error(
+              "Failed to remove subscription for address [{}] from Redis. "
+                  + "A leftover entry may remain until cleanup.",
+              address,
+              e);
+        }
       }
     } finally {
       lock.unlock();
