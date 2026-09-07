@@ -5,7 +5,7 @@
 
   <groupId>io.github.shadowbrook</groupId>
   <artifactId>vertx-redis-clustermanager</artifactId>
-  <version>0.0.1</version>
+  <version>0.0.2</version>
 
   <name>Vert.x Redis ClusterManager</name>
   <description>Vert.x ClusterManager for Redis (fork with dependency upgrades).</description>
