@@ -146,6 +146,28 @@ class ITSubscriptionCatalog {
   }
 
   @Test
+  void reconcileOwnSubs() {
+    RegistrationInfo reg1 = new RegistrationInfo("node1", 1, false);
+    RegistrationInfo reg2 = new RegistrationInfo("node1", 2, false);
+    subsCatalog.put("sub-1", reg1);
+    subsCatalog.put("sub-2", reg2);
+
+    // Simulate a silent loss on the Redis side (bypassing the catalog), e.g. a write that
+    // failed during a Redis outage.
+    RSetMultimap<String, RegistrationInfo> subsMap =
+        redisson.getSetMultimap(keyFactory.vertx("subs"));
+    assertThat(subsMap.remove("sub-1", reg1)).isTrue();
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1")).isEmpty();
+
+    assertThat(subsCatalog.reconcileOwnSubs()).isEqualTo(1);
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1"))
+        .containsExactly(reg1);
+
+    // Nothing left to repair: no address must be reported as fixed.
+    assertThat(subsCatalog.reconcileOwnSubs()).isEqualTo(0);
+  }
+
+  @Test
   void removeForAllNodes() {
     putSubs();
     subsCatalog.removeAllForNodes(singleton("node1"));

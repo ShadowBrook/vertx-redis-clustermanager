@@ -342,6 +342,42 @@ public class SubscriptionCatalog {
     }
   }
 
+  /**
+   * Reconcile the subscriptions owned by this node with the state in Redis. Registrations present
+   * in memory but missing in Redis (e.g. silently lost during a Redis outage) are re-written and
+   * republished. Only repairs are logged, at error level, since a repair implies a silent write
+   * loss has occurred.
+   *
+   * @return the number of addresses that were repaired
+   */
+  public int reconcileOwnSubs() {
+    Lock writeLock = readWriteLock.writeLock();
+    writeLock.lock();
+    try {
+      Set<String> repaired = new HashSet<>();
+      for (Map.Entry<String, Set<RegistrationInfo>> entry : ownSubs.entrySet()) {
+        String address = entry.getKey();
+        Set<RegistrationInfo> missing = new HashSet<>(entry.getValue());
+        missing.removeAll(subsMap.getAll(address));
+        for (RegistrationInfo registrationInfo : missing) {
+          subsMap.put(address, registrationInfo);
+          repaired.add(address);
+        }
+      }
+      if (!repaired.isEmpty()) {
+        log.error(
+            "Silent subscription write loss detected: {} address(es) were missing in Redis and "
+                + "have been restored by reconciliation: {}",
+            repaired.size(),
+            repaired);
+        repaired.forEach(topic::publish);
+      }
+      return repaired.size();
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
   /** Close the subscription catalog. */
   public void close() {
     topic.removeListener(listenerId);
