@@ -105,7 +105,8 @@ class RedisConfigTest {
         .addLock(new LockConfig("test").setLeaseTime(1000))
         .addLock(new LockConfig(Pattern.compile("lock-.*")).setLeaseTime(-1))
         .setUsername("my-user")
-        .setKeyNamespace("test");
+        .setKeyNamespace("test")
+        .setSubscriptionReconcileIntervalMs(60000L);
   }
 
   @Test
@@ -155,6 +156,24 @@ class RedisConfigTest {
     RedisConfig config = new RedisConfig().setUsername("test").setPassword("secret");
     assertEquals("test", config.getUsername());
     assertEquals("secret", config.getPassword());
+  }
+
+  @Test
+  void subscriptionReconcileIntervalDefault() {
+    assertEquals(30000L, new RedisConfig().getSubscriptionReconcileIntervalMs());
+  }
+
+  @Test
+  void subscriptionReconcileIntervalSetter() {
+    RedisConfig config = new RedisConfig().setSubscriptionReconcileIntervalMs(0L);
+    assertEquals(0L, config.getSubscriptionReconcileIntervalMs());
+  }
+
+  @Test
+  void subscriptionReconcileIntervalFromJson() {
+    RedisConfig config =
+        new RedisConfig(new JsonObject().put("subscriptionReconcileIntervalMs", 500));
+    assertEquals(500L, config.getSubscriptionReconcileIntervalMs());
   }
 
   @Test
