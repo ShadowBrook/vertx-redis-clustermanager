@@ -222,6 +222,19 @@ public class SubscriptionCatalog {
   }
 
   /**
+   * Check whether a registration from the given node is currently present in Redis for the given
+   * address. Intended for application level health checks, e.g. to detect subscriptions that are
+   * silently missing in Redis.
+   *
+   * @param address the subscription address
+   * @param nodeId the node ID of the registration
+   * @return true if Redis holds a registration from the node for the address
+   */
+  public boolean isRegisteredInRedis(String address, String nodeId) {
+    return subsMap.getAll(address).stream().anyMatch(info -> info.nodeId().equals(nodeId));
+  }
+
+  /**
    * Remove subscriptions for all nodes in the passed set.
    *
    * @param nodeIds a set of nodes for which to remove subscriptions

@@ -252,6 +252,21 @@ class ITSubscriptionCatalog {
   }
 
   @Test
+  void isRegisteredInRedis() {
+    subsCatalog.put("sub-1", new RegistrationInfo("node1", 1, false));
+    subsCatalog.put("sub-1", new RegistrationInfo("node2", 2, false));
+
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node1")).isTrue();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node2")).isTrue();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node3")).isFalse();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-2", "node1")).isFalse();
+
+    // localOnly registrations never reach Redis.
+    subsCatalog.put("local-1", new RegistrationInfo("node1", 3, true));
+    assertThat(subsCatalog.isRegisteredInRedis("local-1", "node1")).isFalse();
+  }
+
+  @Test
   void removeForAllNodes() {
     putSubs();
     subsCatalog.removeAllForNodes(singleton("node1"));
