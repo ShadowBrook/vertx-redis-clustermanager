@@ -23,6 +23,9 @@ import java.util.Optional;
 @JsonGen
 public class RedisConfig {
 
+  /** Default interval in milliseconds between subscription reconciliations. */
+  public static final long DEFAULT_SUBSCRIPTION_RECONCILE_INTERVAL_MS = 30000L;
+
   /** The client type. */
   private ClientType type = ClientType.STANDALONE;
 
@@ -37,6 +40,12 @@ public class RedisConfig {
 
   /** Redis response timeout. */
   private Integer responseTimeout;
+
+  /**
+   * Interval in milliseconds between periodic subscription reconciliations. <code>0</code>
+   * disables periodic reconciliation.
+   */
+  private Long subscriptionReconcileIntervalMs;
 
   /** Default Redis URL. */
   private final String defaultEndpoint;
@@ -70,6 +79,7 @@ public class RedisConfig {
     username = other.username;
     password = other.password;
     responseTimeout = other.responseTimeout;
+    subscriptionReconcileIntervalMs = other.subscriptionReconcileIntervalMs;
     endpoints = new ArrayList<>(other.endpoints);
     other.maps.stream().map(MapConfig::new).forEach(maps::add);
     other.locks.stream().map(LockConfig::new).forEach(locks::add);
@@ -189,6 +199,32 @@ public class RedisConfig {
    */
   public Integer getResponseTimeout() {
     return responseTimeout;
+  }
+
+  /**
+   * Set the periodic subscription reconciliation interval. This makes the cluster manager
+   * periodically verify that its own subscriptions are still present in Redis and restore any that
+   * were silently lost.
+   *
+   * <p>Default value: <code>30000</code>. Set to <code>0</code> to disable periodic reconciliation.
+   *
+   * @param subscriptionReconcileIntervalMs the interval in milliseconds
+   * @return fluent self
+   */
+  public RedisConfig setSubscriptionReconcileIntervalMs(Long subscriptionReconcileIntervalMs) {
+    this.subscriptionReconcileIntervalMs = subscriptionReconcileIntervalMs;
+    return this;
+  }
+
+  /**
+   * Get the periodic subscription reconciliation interval.
+   *
+   * @return the interval in milliseconds or <code>0</code> when periodic reconciliation is disabled
+   */
+  public Long getSubscriptionReconcileIntervalMs() {
+    return subscriptionReconcileIntervalMs == null
+        ? DEFAULT_SUBSCRIPTION_RECONCILE_INTERVAL_MS
+        : subscriptionReconcileIntervalMs;
   }
 
   /**
@@ -317,6 +353,7 @@ public class RedisConfig {
         && Objects.equals(username, that.username)
         && Objects.equals(password, that.password)
         && Objects.equals(responseTimeout, that.responseTimeout)
+        && Objects.equals(subscriptionReconcileIntervalMs, that.subscriptionReconcileIntervalMs)
         && Objects.equals(defaultEndpoint, that.defaultEndpoint)
         && Objects.equals(endpoints, that.endpoints)
         && Objects.equals(maps, that.maps)
@@ -331,6 +368,7 @@ public class RedisConfig {
         username,
         password,
         responseTimeout,
+        subscriptionReconcileIntervalMs,
         defaultEndpoint,
         endpoints,
         maps,

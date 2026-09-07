@@ -58,8 +58,10 @@ public class SubscriptionCatalog {
     this.registrationListener = registrationListener;
     subsMap = redisson.getSetMultimap(keyFactory.vertx("subs"));
     topic = redisson.getTopic(keyFactory.topic("subs"));
-    listenerId = topic.addListener(String.class, this::onMessage);
+    // Initialize throttling before registering the topic listener. addListener is asynchronous and
+    // may dispatch a pending message on a Redisson Netty thread before the constructor finishes.
     throttling = new Throttling(this::getAndUpdate);
+    listenerId = topic.addListener(String.class, this::onMessage);
   }
 
   /**
@@ -126,8 +128,18 @@ public class SubscriptionCatalog {
         fireRegistrationUpdateEvent(address);
       } else {
         ownSubs.compute(address, (k, v) -> addToSet(registrationInfo, v));
-        subsMap.put(address, registrationInfo);
-        topic.publish(address);
+        try {
+          subsMap.put(address, registrationInfo);
+          topic.publish(address);
+        } catch (Exception e) {
+          // The in-memory registration above is kept, so periodic reconciliation will
+          // repair the missing write.
+          log.error(
+              "Failed to write subscription for address [{}] to Redis. "
+                  + "It will be repaired by reconciliation.",
+              address,
+              e);
+        }
       }
     } finally {
       lock.unlock();
@@ -185,8 +197,18 @@ public class SubscriptionCatalog {
         fireRegistrationUpdateEvent(address);
       } else {
         ownSubs.computeIfPresent(address, (k, v) -> removeFromSet(registrationInfo, v));
-        subsMap.remove(address, registrationInfo);
-        topic.publish(address);
+        try {
+          subsMap.remove(address, registrationInfo);
+          topic.publish(address);
+        } catch (Exception e) {
+          // The in-memory registration above was already removed, so reconciliation will
+          // not re-add it. A leftover entry in Redis is cleaned up on cluster leave.
+          log.error(
+              "Failed to remove subscription for address [{}] from Redis. "
+                  + "A leftover entry may remain until cleanup.",
+              address,
+              e);
+        }
       }
     } finally {
       lock.unlock();
@@ -197,6 +219,19 @@ public class SubscriptionCatalog {
       RegistrationInfo registrationInfo, Set<RegistrationInfo> value) {
     value.remove(registrationInfo);
     return value.isEmpty() ? null : value;
+  }
+
+  /**
+   * Check whether a registration from the given node is currently present in Redis for the given
+   * address. Intended for application level health checks, e.g. to detect subscriptions that are
+   * silently missing in Redis.
+   *
+   * @param address the subscription address
+   * @param nodeId the node ID of the registration
+   * @return true if Redis holds a registration from the node for the address
+   */
+  public boolean isRegisteredInRedis(String address, String nodeId) {
+    return subsMap.getAll(address).stream().anyMatch(info -> info.nodeId().equals(nodeId));
   }
 
   /**
@@ -335,6 +370,42 @@ public class SubscriptionCatalog {
                     updated.add(address);
                   }));
       updated.forEach(topic::publish);
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  /**
+   * Reconcile the subscriptions owned by this node with the state in Redis. Registrations present
+   * in memory but missing in Redis (e.g. silently lost during a Redis outage) are re-written and
+   * republished. Only repairs are logged, at error level, since a repair implies a silent write
+   * loss has occurred.
+   *
+   * @return the number of addresses that were repaired
+   */
+  public int reconcileOwnSubs() {
+    Lock writeLock = readWriteLock.writeLock();
+    writeLock.lock();
+    try {
+      Set<String> repaired = new HashSet<>();
+      for (Map.Entry<String, Set<RegistrationInfo>> entry : ownSubs.entrySet()) {
+        String address = entry.getKey();
+        Set<RegistrationInfo> missing = new HashSet<>(entry.getValue());
+        missing.removeAll(subsMap.getAll(address));
+        for (RegistrationInfo registrationInfo : missing) {
+          subsMap.put(address, registrationInfo);
+          repaired.add(address);
+        }
+      }
+      if (!repaired.isEmpty()) {
+        log.error(
+            "Silent subscription write loss detected: {} address(es) were missing in Redis and "
+                + "have been restored by reconciliation: {}",
+            repaired.size(),
+            repaired);
+        repaired.forEach(topic::publish);
+      }
+      return repaired.size();
     } finally {
       writeLock.unlock();
     }

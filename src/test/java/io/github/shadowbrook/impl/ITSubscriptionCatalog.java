@@ -16,13 +16,18 @@ import io.github.shadowbrook.RedisTestContainerFactory;
 import io.vertx.core.spi.cluster.RegistrationInfo;
 import io.vertx.core.spi.cluster.RegistrationListener;
 import io.vertx.core.spi.cluster.RegistrationUpdateEvent;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.Redisson;
 import org.redisson.api.RSet;
 import org.redisson.api.RSetMultimap;
+import org.redisson.api.RTopic;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.testcontainers.containers.GenericContainer;
@@ -143,6 +148,122 @@ class ITSubscriptionCatalog {
     assertThat(subsCatalog.get("sub-2")).isEmpty();
     verify(registrationListener, timeout(100).atLeast(1))
         .registrationsUpdated(any(RegistrationUpdateEvent.class));
+  }
+
+  @Test
+  void reconcileOwnSubs() {
+    RegistrationInfo reg1 = new RegistrationInfo("node1", 1, false);
+    RegistrationInfo reg2 = new RegistrationInfo("node1", 2, false);
+    subsCatalog.put("sub-1", reg1);
+    subsCatalog.put("sub-2", reg2);
+
+    // Simulate a silent loss on the Redis side (bypassing the catalog), e.g. a write that
+    // failed during a Redis outage.
+    RSetMultimap<String, RegistrationInfo> subsMap =
+        redisson.getSetMultimap(keyFactory.vertx("subs"));
+    assertThat(subsMap.remove("sub-1", reg1)).isTrue();
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1")).isEmpty();
+
+    assertThat(subsCatalog.reconcileOwnSubs()).isEqualTo(1);
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1"))
+        .containsExactly(reg1);
+
+    // Nothing left to repair: no address must be reported as fixed.
+    assertThat(subsCatalog.reconcileOwnSubs()).isEqualTo(0);
+  }
+
+  /**
+   * Wrap the given Redisson client so that the returned subs map and topic objects throw an
+   * exception for every method named in {@code failingMethods}. The set is live: clearing it
+   * "repairs" the proxy and restores pass-through behaviour.
+   */
+  private RedissonClient failingWritesRedisson(
+      RedissonClient delegate, Set<String> failingMethods) {
+    return (RedissonClient)
+        Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class<?>[] {RedissonClient.class},
+            (proxy, method, args) -> {
+              if (method.getName().equals("getSetMultimap")) {
+                return failingProxy(
+                    method.invoke(delegate, args), new Class<?>[] {RSetMultimap.class}, failingMethods);
+              }
+              if (method.getName().equals("getTopic")) {
+                return failingProxy(
+                    method.invoke(delegate, args), new Class<?>[] {RTopic.class}, failingMethods);
+              }
+              return method.invoke(delegate, args);
+            });
+  }
+
+  private Object failingProxy(Object target, Class<?>[] interfaces, Set<String> failingMethods) {
+    return Proxy.newProxyInstance(
+        getClass().getClassLoader(),
+        interfaces,
+        (proxy, method, args) -> {
+          if (failingMethods.contains(method.getName())) {
+            throw new RuntimeException("Simulated Redis failure");
+          }
+          try {
+            return method.invoke(target, args);
+          } catch (InvocationTargetException e) {
+            throw e.getCause();
+          }
+        });
+  }
+
+  @Test
+  void putSurvivesRedisWriteFailure() {
+    Set<String> failingMethods = new HashSet<>(Set.of("put", "publish"));
+    SubscriptionCatalog catalog =
+        new SubscriptionCatalog(
+            failingWritesRedisson(redisson, failingMethods), keyFactory, registrationListener);
+    RegistrationInfo reg = new RegistrationInfo("node1", 1, false);
+
+    // The Redis write fails but must not propagate.
+    assertDoesNotThrow(() -> catalog.put("sub-1", reg));
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1")).isEmpty();
+
+    // The registration was kept in memory, so repairing the proxy lets reconciliation
+    // write it to Redis.
+    failingMethods.clear();
+    assertThat(catalog.reconcileOwnSubs()).isEqualTo(1);
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1"))
+        .containsExactly(reg);
+    catalog.close();
+  }
+
+  @Test
+  void removeSurvivesRedisWriteFailure() {
+    Set<String> failingMethods = new HashSet<>(Set.of("remove", "publish"));
+    SubscriptionCatalog catalog =
+        new SubscriptionCatalog(
+            failingWritesRedisson(redisson, failingMethods), keyFactory, registrationListener);
+    RegistrationInfo reg = new RegistrationInfo("node1", 1, false);
+    catalog.put("sub-1", reg);
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1"))
+        .containsExactly(reg);
+
+    // The Redis removal fails but must not propagate.
+    assertDoesNotThrow(() -> catalog.remove("sub-1", reg));
+    assertThat(redisson.getSetMultimap(keyFactory.vertx("subs")).getAll("sub-1"))
+        .containsExactly(reg);
+    catalog.close();
+  }
+
+  @Test
+  void isRegisteredInRedis() {
+    subsCatalog.put("sub-1", new RegistrationInfo("node1", 1, false));
+    subsCatalog.put("sub-1", new RegistrationInfo("node2", 2, false));
+
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node1")).isTrue();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node2")).isTrue();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-1", "node3")).isFalse();
+    assertThat(subsCatalog.isRegisteredInRedis("sub-2", "node1")).isFalse();
+
+    // localOnly registrations never reach Redis.
+    subsCatalog.put("local-1", new RegistrationInfo("node1", 3, true));
+    assertThat(subsCatalog.isRegisteredInRedis("local-1", "node1")).isFalse();
   }
 
   @Test
