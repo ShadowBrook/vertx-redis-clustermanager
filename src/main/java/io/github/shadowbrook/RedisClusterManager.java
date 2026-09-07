@@ -50,6 +50,9 @@ public class RedisClusterManager implements ClusterManager, NodeInfoCatalogListe
   private final AtomicBoolean active = new AtomicBoolean();
   private final ReentrantLock lock = new ReentrantLock(true);
 
+  /** Timer ID of the periodic subscription reconciliation, or -1 when not scheduled. */
+  private long reconcileTimerId = -1;
+
   private RedissonRedisInstance dataGrid;
 
   private NodeInfoCatalog nodeInfoCatalog;
@@ -176,6 +179,7 @@ public class RedisClusterManager implements ClusterManager, NodeInfoCatalogListe
                   log.debug("Join cluster as {}", nodeId);
                   dataGrid = new RedissonRedisInstance(vertx, redissonContext);
                   createCatalogs(redissonContext.client());
+                  startSubscriptionReconcileTimer();
                 }
               } else {
                 log.warn("Already activated, nodeId: {}", nodeId);
@@ -197,6 +201,61 @@ public class RedisClusterManager implements ClusterManager, NodeInfoCatalogListe
           new SubscriptionCatalog(redisson, redissonContext.keyFactory(), registrationListener);
     }
     subscriptionCatalog.removeUnknownSubs(nodeId, nodeInfoCatalog.getNodes());
+  }
+
+  /**
+   * Schedule the periodic subscription reconciliation according to the configured interval. A zero
+   * or negative interval disables the periodic reconciliation.
+   */
+  private void startSubscriptionReconcileTimer() {
+    long interval = redissonContext.config().getSubscriptionReconcileIntervalMs();
+    if (interval > 0) {
+      reconcileTimerId = vertx.setPeriodic(interval, timerId -> reconcileNow());
+      log.debug("Subscription reconciliation scheduled every {} ms", interval);
+    } else {
+      log.debug("Periodic subscription reconciliation disabled");
+    }
+  }
+
+  private void stopSubscriptionReconcileTimer() {
+    if (reconcileTimerId != -1) {
+      vertx.cancelTimer(reconcileTimerId);
+      reconcileTimerId = -1;
+    }
+  }
+
+  /**
+   * Reconcile the subscriptions owned by this node with Redis immediately. Registrations that are
+   * missing in Redis, typically because a write silently failed during a Redis outage, are
+   * restored.
+   */
+  public void reconcileNow() {
+    if (!isActive() || subscriptionCatalog == null) {
+      return;
+    }
+    vertx
+        .executeBlocking(
+            () -> {
+              subscriptionCatalog.reconcileOwnSubs();
+              return null;
+            },
+            false)
+        .onFailure(t -> log.error("Subscription reconciliation failed", t));
+  }
+
+  /**
+   * Check whether this node has a registration visible in Redis for the given address. Intended
+   * for application level health checks, e.g. to detect subscriptions silently lost during a Redis
+   * outage.
+   *
+   * @param address the subscription address
+   * @return true when the cluster manager is active and Redis holds the registration
+   */
+  public boolean isSubscriptionVisible(String address) {
+    if (!isActive() || subscriptionCatalog == null) {
+      return false;
+    }
+    return subscriptionCatalog.isRegisteredInRedis(address, nodeId);
   }
 
   private String logId(String nodeId) {
@@ -266,6 +325,9 @@ public class RedisClusterManager implements ClusterManager, NodeInfoCatalogListe
               if (active.compareAndSet(true, false)) {
                 try (var ignored = CloseableLock.lock(lock)) {
                   log.debug("Leave custer as {}", nodeId);
+
+                  // Stop the subscription reconciliation timer.
+                  stopSubscriptionReconcileTimer();
 
                   // Stop catalog services.
                   closeCatalogs();
